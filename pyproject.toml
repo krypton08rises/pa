@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jetson-nano-asr"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "faster-whisper",
+    "silero-vad",
+    "sounddevice",
+    "numpy",
+    "librosa",
+    "soundfile",
+    "torch",
+    "torchaudio",
+]
+
+
+# NOTE: torch must be installed manually on Jetson Nano using NVIDIA's
+# prebuilt wheel for CUDA 10.2 / aarch64. Do not pip install torch directly.
+# https://forums.developer.nvidia.com/t/pytorch-for-jetson/72048
