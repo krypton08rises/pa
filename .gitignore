@@ -1,5 +1,11 @@
 .claude/
 
+<<<<<<< HEAD
 __pycache__/
 *.py[cod]
 *.egg-info/
+=======
+# Python bytecode
+__pycache__/
+*.py[cod]
+>>>>>>> 5fb9a14 (feat: implemented producer)

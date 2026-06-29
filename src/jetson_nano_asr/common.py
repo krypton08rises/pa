@@ -1,12 +1,16 @@
+import torchaudio as ta
+import numpy as np
 from enum import IntEnum 
 from pathlib import Path    
-from typing import Literal
+from typing import Literal, NewType
 
 import librosa 
 
 MAX_BUFFER_SIZE = 10 # Seconds?
 
-DEVICES = (14, 17)
+DEVICE = 14
+
+ResampleType = NewType("ResampleType", Literal["kaiser_best", "kaiser_fast", "fft", "polyphase", "soxr_qq", "soxr_vhq", "soxr_hq", "soxr_mq", "soxr_lq"])
 
 class SampleRate(IntEnum):
     EXPECTED: int = 48000 
@@ -20,26 +24,41 @@ class Channels(IntEnum):
 
     
 class RecordingConfig:
-    device: tuple[int, int]= DEVICES
-    file_path: Path | None = Path(__file__).parent / "test.wav"
-    device_name: str = "Full HD webcam"
-    sample_rate:SampleRate = SampleRate.EXPECTED
-    channels:Channels = Channels.MONO
-    chunk_size:int = 512 
+    def __init__(
+            self, 
+            device: int = DEVICE, 
+            file_path: Path | None = Path(__file__).parent / "test.wav", device_name: str = "Full HD webcam", 
+            sample_rate:SampleRate = SampleRate.DEFAULT, 
+            channels:Channels = Channels.MONO, 
+            chunk_size:int = 512, 
+            max_queue_size: int = 1024
+        ):
+        self.device: int = device
+        self.file_path: Path | None = file_path
+        self.device_name: str = device_name
+        self.sample_rate: SampleRate = sample_rate
+        self.channels: Channels = channels
+        self.chunk_size: int = chunk_size 
+        self.max_queue_size: int = max_queue_size
+        
     
 
 class ResampleConfig:
+    
+    def __init__(
+            self, 
+            original_sr: int = SampleRate.EXPECTED.value, 
+            target_sr: int = SampleRate.DEFAULT.value, 
+            res_type: ResampleType = "polyphase"
+        ):
+        self.original_sr = original_sr
+        self.target_sr = target_sr
+        self.res_type = res_type
 
-    original_sr = SampleRate.EXPECTED
-    target_sr = SampleRate.DEFAULT # Or can be set to SampleRate.HALF_SUPPORT for quicker processing
-    res_type: Literal["kaiser_best", "kaiser_fast", "fft", "polyphase", "soxr_qq", "soxr_vhq", "soxr_hq", "soxr_mq", "soxr_lq"] = "kaiser_best"
-
-
-    @classmethod
-    def resample_audio(cls, audio: list[float]) -> list[float]:
-        if cls.original_sr == cls.target_sr:
+    def resample_audio(self, audio: np.ndarray[float]) -> np.ndarray[float]:
+        if self.original_sr == self.target_sr:
             return audio
         else:
-            resampled_audio = librosa.resample(audio, orig_sr=cls.original_sr, target_sr=cls.target_sr, res_type=cls.res_type)
+            resampled_audio = librosa.resample(audio, orig_sr=self.original_sr, target_sr=self.target_sr, res_type=self.res_type)
             return resampled_audio
     
