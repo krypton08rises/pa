@@ -41,11 +41,11 @@ class RecordingConfig:
     def __init__(
         self,
         device: int = DEVICE,
-        file_path: Path | None = Path(__file__).parent / "test.wav",
+        file_path: Path | None = None,  # Path(__file__).parent / "test.wav",
         device_name: str = "Full HD webcam",
         sample_rate: SampleRate = SampleRate.DEFAULT,
         channels: Channels = Channels.MONO,
-        chunk_size: int = 512,
+        chunk_size: int = 1536,  # 512 * 3 (downsample from 48kHz to 16kHz)
         max_queue_size: int = 1024,
     ):
         self.device: int = device

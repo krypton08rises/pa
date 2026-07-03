@@ -5,7 +5,6 @@ from jetson_nano_asr.common import RecordingConfig, ResampleConfig
 from loggy import logger
 from torchcodec.decoders import AudioDecoder
 
-import threading
 from queue import Queue
 
 
@@ -17,7 +16,7 @@ class AudioStream:
         self.config = config
         self.counter = 0  # Chunks seen so far
         self.use_file = config.file_path is not None
-        self.event = threading.Event()
+        self.min_required_chunk_size = int(config.sample_rate / 31.25)
 
         if self.use_file:
             self.file_metadata = (
@@ -91,6 +90,14 @@ class AudioStream:
             return self.stop_stream()
 
         self.counter += 1
+
+        if _chunk.size < self.min_required_chunk_size:
+            _chunk = np.pad(
+                _chunk,
+                (0, int(self.min_required_chunk_size - _chunk.shape[0])),
+                mode="constant",
+                constant_values=0,
+            )
         return self.resample_config.resample_audio(
             _chunk.reshape(
                 -1,
@@ -109,25 +116,3 @@ class AudioStream:
         self.stop_stream()
 
         return None
-
-
-# Example usage:
-if __name__ == "__main__":
-
-    import argparse
-
-    parser = argparse.ArgumentParser(description="Audio Stream Example")
-    parser.add_argument(
-        "--test-file",
-        type=bool,
-        default=False,
-        help="Use a test audio file instead of live recording",
-    )
-    args = parser.parse_args()
-
-    config = RecordingConfig()
-    with AudioStream(config) as audio_stream:
-        print("Recording audio...")
-        for _ in range(5):  # Read 5 chunks of audio data
-            audio_chunk = audio_stream.read()
-            print(f"Received audio chunk of shape: {audio_chunk.shape}")
