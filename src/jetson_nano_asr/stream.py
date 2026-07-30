@@ -34,6 +34,16 @@ class AudioStream:
                 target_sr=self.config.sample_rate,
             )
 
+        # Silero needs exactly `min_required_chunk_size` samples at target_sr
+        # (512 @ 16k, 256 @ 8k). Read enough at the SOURCE rate so that after
+        # resampling we land on exactly that — derived, not hardcoded, so mic
+        # (48k -> 1536) and 16k file (-> 512) both work.
+        self.source_blocksize = round(
+            self.min_required_chunk_size
+            * self.resample_config.original_sr
+            / self.resample_config.target_sr
+        )
+
     def audio_callback(self, indata, frames, time, status) -> None:
         if status:
             logger.debug(
@@ -49,21 +59,12 @@ class AudioStream:
             with sf.SoundFile(self.config.file_path) as file_stream:
                 logger.info("Streaming audio from file: {fp}", fp=self.config.file_path)
                 while True:
-                    data = file_stream.read(self.config.chunk_size, dtype="float32")
+                    data = file_stream.read(self.source_blocksize, dtype="float32")
                     if not data.size:
                         break
-                    logger.info(
-                        "Data size: {ds} | Total chunks: {qsize}",
-                        ds=data.size,
-                        qsize=self.queue.qsize(),
-                    )
                     self.queue.put(data)
                     self.counter += 1
 
-                logger.info(
-                    "Finished streaming audio from file | Total chunks: {chunks}",
-                    chunks=self.queue.qsize(),
-                )
                 self.queue.put(None)
 
         else:
@@ -71,7 +72,7 @@ class AudioStream:
                 device=self.config.device,
                 channels=self.config.channels,
                 samplerate=self.resample_config.original_sr,
-                blocksize=self.config.chunk_size,
+                blocksize=self.source_blocksize,
                 dtype="float32",
                 callback=self.audio_callback,
             )
@@ -91,18 +92,19 @@ class AudioStream:
 
         self.counter += 1
 
-        if _chunk.size < self.min_required_chunk_size:
-            _chunk = np.pad(
-                _chunk,
-                (0, int(self.min_required_chunk_size - _chunk.shape[0])),
+        resampled = self.resample_config.resample_audio(_chunk.reshape(-1))
+
+        # Pad the final short chunk (the file tail) up to the exact window Silero
+        # requires. Padding AFTER resampling, since that's the length the model
+        # actually sees. Dropping the tail instead would be fine too (<32ms).
+        if resampled.shape[0] < self.min_required_chunk_size:
+            resampled = np.pad(
+                resampled,
+                (0, self.min_required_chunk_size - resampled.shape[0]),
                 mode="constant",
                 constant_values=0,
             )
-        return self.resample_config.resample_audio(
-            _chunk.reshape(
-                -1,
-            )
-        )
+        return resampled
 
     def __enter__(self) -> "AudioStream":
         self.start_stream()

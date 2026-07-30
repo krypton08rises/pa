@@ -37,7 +37,9 @@ class VadChunkStream:
                 audio_chunk = audio_stream.read()
                 if audio_chunk is None:
                     # this will be the thread stopping condition, when the stream is closed and no more audio chunks are available
+                    yield None  # Yield None to indicate the end of the stream
                     break
+
                 logger.info(
                     "Chunk Shape: {shape} | Total chunks: {qsize}",
                     shape=audio_chunk.shape,

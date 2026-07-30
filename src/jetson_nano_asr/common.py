@@ -40,15 +40,22 @@ class Channels(IntEnum):
 class RecordingConfig:
     def __init__(
         self,
-        device: int = DEVICE,
-        file_path: Path | None = None,  # Path(__file__).parent / "test.wav",
+        audio_device: int = DEVICE,
+        mic: bool = True,
+        file_path: Path | None = Path(__file__).parent / "test.wav",
         device_name: str = "Full HD webcam",
         sample_rate: SampleRate = SampleRate.DEFAULT,
         channels: Channels = Channels.MONO,
         chunk_size: int = 1536,  # 512 * 3 (downsample from 48kHz to 16kHz)
         max_queue_size: int = 1024,
     ):
-        self.device: int = device
+
+        self.device: int = audio_device
+        if not mic and file_path is None:
+            raise ValueError(
+                "Either mic must be True or a valid file_path must be provided."
+            )
+
         self.file_path: Path | None = file_path
         self.device_name: str = device_name
         self.sample_rate: SampleRate = sample_rate
@@ -63,7 +70,7 @@ class ResampleConfig:
         self,
         original_sr: int = SampleRate.EXPECTED.value,
         target_sr: int = SampleRate.DEFAULT.value,
-        res_type: ResampleType = "polyphase",
+        res_type: ResampleType = ResampleType("polyphase"),
     ):
         self.original_sr = original_sr
         self.target_sr = target_sr
@@ -77,6 +84,6 @@ class ResampleConfig:
                 audio,
                 orig_sr=self.original_sr,
                 target_sr=self.target_sr,
-                res_type=self.res_type,
+                res_type=self.res_type.value,
             )
             return resampled_audio
