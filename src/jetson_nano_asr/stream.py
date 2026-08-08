@@ -3,7 +3,9 @@ import soundfile as sf
 import numpy as np
 from jetson_nano_asr.common import RecordingConfig, ResampleConfig
 from loggy import logger
-from torchcodec.decoders import AudioDecoder
+from pathlib import Path
+import threading
+
 
 from queue import Queue
 
@@ -11,19 +13,18 @@ from queue import Queue
 # Implement a queue to hold audio chunks and a callback function to read audio data from the stream and put it into the queue.
 class AudioStream:
     def __init__(self, config: RecordingConfig):
-        self.queue = Queue(maxsize=config.max_queue_size)
         self.stream = None
         self.config = config
+        self.queue = Queue(maxsize=self.config.max_queue_size)
+        self.second_count = 0
         self.counter = 0  # Chunks seen so far
         self.use_file = config.file_path is not None
         self.min_required_chunk_size = int(config.sample_rate / 31.25)
 
         if self.use_file:
-            self.file_metadata = (
-                AudioDecoder(config.file_path).metadata if self.use_file else None
-            )
+            self.file_metadata = sf.info(config.file_path)
             self.resample_config = ResampleConfig(
-                original_sr=self.file_metadata.sample_rate,
+                original_sr=self.file_metadata.samplerate,
                 target_sr=self.config.sample_rate,
             )
         else:
@@ -33,7 +34,7 @@ class AudioStream:
                 ],
                 target_sr=self.config.sample_rate,
             )
-
+        self.file_thread: threading.Thread | None = None
         # Silero needs exactly `min_required_chunk_size` samples at target_sr
         # (512 @ 16k, 256 @ 8k). Read enough at the SOURCE rate so that after
         # resampling we land on exactly that — derived, not hardcoded, so mic
@@ -54,18 +55,33 @@ class AudioStream:
 
         self.queue.put(indata.copy())
 
-    def start_stream(self) -> None:
-        if self.use_file:
-            with sf.SoundFile(self.config.file_path) as file_stream:
-                logger.info("Streaming audio from file: {fp}", fp=self.config.file_path)
-                while True:
-                    data = file_stream.read(self.source_blocksize, dtype="float32")
-                    if not data.size:
-                        break
-                    self.queue.put(data)
-                    self.counter += 1
+    def threadable_filestream(self, filepath: Path, chunk_size: int) -> None:
+        with sf.SoundFile(filepath) as file_stream:
+            for block in file_stream.blocks(
+                blocksize=chunk_size, dtype="float32", always_2d=True
+            ):
+                self.queue.put(block)
 
-                self.queue.put(None)
+        self.queue.put(None)  # Signal the end of the stream
+        logger.info("Finished streaming audio from file: {fp}", fp=filepath)
+
+    def start_stream(self) -> None:
+
+        if self.use_file:
+            logger.info(
+                "Starting producer Thread to stream audio from file: {fp}",
+                fp=self.config.file_path,
+            )
+            self.file_thread = (
+                threading.Thread(
+                    target=self.threadable_filestream,
+                    args=(self.config.file_path, self.source_blocksize),
+                    daemon=True,
+                )
+                if self.use_file
+                else None
+            )
+            self.file_thread.start()
 
         else:
             self.stream = sd.InputStream(
@@ -79,7 +95,12 @@ class AudioStream:
             self.stream.start()
 
     def stop_stream(self) -> None:
+
+        if self.file_thread and self.file_thread.is_alive():
+            self.file_thread.join()  # Wait for the thread to finish
+
         if self.stream:
+
             self.stream.stop()
             self.stream.close()
             self.stream = None
@@ -89,10 +110,19 @@ class AudioStream:
         if (_chunk := self.queue.get()) is None:
             self.queue.put(None)  # Put None back in the queue for other consumers
             return self.stop_stream()
-
         self.counter += 1
+        self.second_count += 1
 
-        resampled = self.resample_config.resample_audio(_chunk.reshape(-1))
+        if _chunk.shape[1] > 1:
+            # logger.warning(
+            #     "Audio chunk has {channels} channels, Downmixing channels to mono for VAD processing.",
+            #     channels=_chunk.shape[1],
+            # )
+            _chunk = np.mean(_chunk, axis=1)
+            resampled = self.resample_config.resample_audio(_chunk)
+
+        else:
+            resampled = self.resample_config.resample_audio(_chunk.reshape(-1))
 
         # Pad the final short chunk (the file tail) up to the exact window Silero
         # requires. Padding AFTER resampling, since that's the length the model
@@ -104,6 +134,10 @@ class AudioStream:
                 mode="constant",
                 constant_values=0,
             )
+        if self.second_count == 32:  # 1 second has passed
+            logger.info("1 SECOND HAS PASSED!")
+            self.second_count = 0
+
         return resampled
 
     def __enter__(self) -> "AudioStream":

@@ -42,7 +42,7 @@ class RecordingConfig:
         self,
         audio_device: int = DEVICE,
         mic: bool = True,
-        file_path: Path | None = Path(__file__).parent / "test.wav",
+        file_path: Path | None = Path(__file__).parent / "data/test_audios/out.wav",
         device_name: str = "Full HD webcam",
         sample_rate: SampleRate = SampleRate.DEFAULT,
         channels: Channels = Channels.MONO,
@@ -84,6 +84,30 @@ class ResampleConfig:
                 audio,
                 orig_sr=self.original_sr,
                 target_sr=self.target_sr,
-                res_type=self.res_type.value,
+                res_type=self.res_type,
             )
             return resampled_audio
+
+
+class VadConfig:
+    def __init__(self):
+
+        self.onset_confirm_chunks: int = (
+            10  # ~320ms of speech (n chunks * 32ms) to confirm speech onset
+        )
+
+        self.speech_complete_timeout_ms: int = (
+            1000  # Timeout for speech completion in milliseconds
+        )
+
+        # The number of
+        self.preroll_ring_size: int = (
+            10  # Number of chunks to keep in the pre-roll buffer (~1 second of audio at 32ms per chunk)
+        )
+
+        # Max Utterance Seconds for whisper is 30 seconds.
+        self.max_utterance_seconds: int = 30
+
+        assert (
+            self.onset_confirm_chunks == self.preroll_ring_size
+        ), "onset_confirm_chunks and preroll_ring_size must be equal for proper pre-roll functionality."
