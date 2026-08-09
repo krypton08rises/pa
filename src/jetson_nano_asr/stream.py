@@ -18,10 +18,9 @@ class AudioStream:
         self.queue = Queue(maxsize=self.config.max_queue_size)
         self.second_count = 0
         self.counter = 0  # Chunks seen so far
-        self.use_file = config.file_path is not None
         self.min_required_chunk_size = int(config.sample_rate / 31.25)
 
-        if self.use_file:
+        if not self.config.mic:
             self.file_metadata = sf.info(config.file_path)
             self.resample_config = ResampleConfig(
                 original_sr=self.file_metadata.samplerate,
@@ -67,19 +66,15 @@ class AudioStream:
 
     def start_stream(self) -> None:
 
-        if self.use_file:
+        if not self.config.mic:
             logger.info(
                 "Starting producer Thread to stream audio from file: {fp}",
                 fp=self.config.file_path,
             )
-            self.file_thread = (
-                threading.Thread(
-                    target=self.threadable_filestream,
-                    args=(self.config.file_path, self.source_blocksize),
-                    daemon=True,
-                )
-                if self.use_file
-                else None
+            self.file_thread = threading.Thread(
+                target=self.threadable_filestream,
+                args=(self.config.file_path, self.source_blocksize),
+                daemon=True,
             )
             self.file_thread.start()
 
@@ -97,7 +92,7 @@ class AudioStream:
     def stop_stream(self) -> None:
 
         if self.file_thread and self.file_thread.is_alive():
-            self.file_thread.join()  # Wait for the thread to finish
+            self.file_thread.join(timeout=5)  # Wait for the thread to finish
 
         if self.stream:
 

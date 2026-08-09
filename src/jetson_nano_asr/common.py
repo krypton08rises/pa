@@ -42,7 +42,7 @@ class RecordingConfig:
         self,
         audio_device: int = DEVICE,
         mic: bool = True,
-        file_path: Path | None = Path(__file__).parent / "data/test_audios/out.wav",
+        file_path: Path | None = None,
         device_name: str = "Full HD webcam",
         sample_rate: SampleRate = SampleRate.DEFAULT,
         channels: Channels = Channels.MONO,
@@ -50,6 +50,7 @@ class RecordingConfig:
         max_queue_size: int = 1024,
     ):
 
+        self.mic: bool = mic
         self.device: int = audio_device
         if not mic and file_path is None:
             raise ValueError(

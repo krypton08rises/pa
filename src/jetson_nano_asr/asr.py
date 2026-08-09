@@ -1,14 +1,11 @@
 from faster_whisper import WhisperModel
 
 from jetson_nano_asr.vad import VadChunkStream
+from jetson_nano_asr.common import RecordingConfig
 from loggy import logger
-
+from pathlib import Path
 
 model_size = "base"
-
-"""
-try with test.wav
-"""
 
 
 def transcribe_audio(model, _chunk) -> str:
@@ -32,21 +29,26 @@ def transcribe_audio(model, _chunk) -> str:
     return message.strip()
 
 
-def main():
+def main(mic_mode: bool, file_path: Path | None) -> None:
     model = WhisperModel(model_size, device="cuda", compute_type="int8_float16")
-    vad_stream = VadChunkStream(onnx=False)
+
+    config = RecordingConfig(mic=mic_mode, file_path=None if mic_mode else file_path)
+    vad_stream = VadChunkStream(recording_config=config)
 
     complete_message = ""
-    for chunk in vad_stream:
-        if chunk is None:
-            logger.info("No more audio chunks available. Exiting.")
-            break
+    vad_stream.start_vad()
+
+    while (chunk := vad_stream.read_utterance()) is not None:
 
         logger.info("Processing chunk of shape: {shape}", shape=chunk.shape)
         complete_message += transcribe_audio(model, chunk)
 
+    # for chunk in vad_stream:
+    #     if chunk is None:
+    #         logger.info("No more audio chunks available. Exiting.")
+    #         break
+
+    #     logger.info("Processing chunk of shape: {shape}", shape=chunk.shape)
+    #     complete_message += transcribe_audio(model, chunk)
+
     logger.info("Final Transcribed Message: {message}", message=complete_message)
-
-
-if __name__ == "__main__":
-    main()
