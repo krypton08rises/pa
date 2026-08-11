@@ -38,17 +38,27 @@ def main(mic_mode: bool, file_path: Path | None) -> None:
     complete_message = ""
     vad_stream.start_vad()
 
-    while (chunk := vad_stream.read_utterance()) is not None:
+    try:
+        while (chunk := vad_stream.read_utterance()) is not None:
 
-        logger.info("Processing chunk of shape: {shape}", shape=chunk.shape)
+            # logger.info("Processing chunk of shape: {shape}", shape=chunk.shape)
+            msg = transcribe_audio(model, chunk)
+            logger.info("Segment Transcribed Message: {message}", message=msg)
+
+            complete_message += msg + "\t"
+    except KeyboardInterrupt:
+        logger.info("KeyboardInterrupt received. Stopping transcription.")
+        vad_stream.stop_event.set()  # Signal the VAD thread to stop
+        vad_stream.vad_thread.join(timeout=5)
+        chunk = None
+
+    except Exception as e:
+        logger.error("An error occurred during transcription: {error}", error=e)
+        vad_stream.stop_event.set()  # Signal the VAD thread to stop
+        chunk = None
+
+    if chunk is not None:
+        logger.info("Processing final chunk of shape: {shape}", shape=chunk.shape)
         complete_message += transcribe_audio(model, chunk)
-
-    # for chunk in vad_stream:
-    #     if chunk is None:
-    #         logger.info("No more audio chunks available. Exiting.")
-    #         break
-
-    #     logger.info("Processing chunk of shape: {shape}", shape=chunk.shape)
-    #     complete_message += transcribe_audio(model, chunk)
 
     logger.info("Final Transcribed Message: {message}", message=complete_message)

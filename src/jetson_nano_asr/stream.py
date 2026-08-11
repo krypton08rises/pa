@@ -16,7 +16,7 @@ class AudioStream:
         self.stream = None
         self.config = config
         self.queue = Queue(maxsize=self.config.max_queue_size)
-        self.second_count = 0
+        # self.second_count = 0
         self.counter = 0  # Chunks seen so far
         self.min_required_chunk_size = int(config.sample_rate / 31.25)
 
@@ -54,7 +54,7 @@ class AudioStream:
 
         self.queue.put(indata.copy())
 
-    def threadable_filestream(self, filepath: Path, chunk_size: int) -> None:
+    def _threadable_filestream(self, filepath: Path, chunk_size: int) -> None:
         with sf.SoundFile(filepath) as file_stream:
             for block in file_stream.blocks(
                 blocksize=chunk_size, dtype="float32", always_2d=True
@@ -72,7 +72,7 @@ class AudioStream:
                 fp=self.config.file_path,
             )
             self.file_thread = threading.Thread(
-                target=self.threadable_filestream,
+                target=self._threadable_filestream,
                 args=(self.config.file_path, self.source_blocksize),
                 daemon=True,
             )
@@ -100,19 +100,17 @@ class AudioStream:
             self.stream.close()
             self.stream = None
 
+        return None
+
     def read(self) -> np.ndarray[float] | None:
 
         if (_chunk := self.queue.get()) is None:
             self.queue.put(None)  # Put None back in the queue for other consumers
             return self.stop_stream()
         self.counter += 1
-        self.second_count += 1
+        # self.second_count += 1
 
         if _chunk.shape[1] > 1:
-            # logger.warning(
-            #     "Audio chunk has {channels} channels, Downmixing channels to mono for VAD processing.",
-            #     channels=_chunk.shape[1],
-            # )
             _chunk = np.mean(_chunk, axis=1)
             resampled = self.resample_config.resample_audio(_chunk)
 
@@ -129,9 +127,9 @@ class AudioStream:
                 mode="constant",
                 constant_values=0,
             )
-        if self.second_count == 32:  # 1 second has passed
-            logger.info("1 SECOND HAS PASSED!")
-            self.second_count = 0
+        # if self.second_count == 32:  # 1 second has passed
+        # logger.info("1 SECOND HAS PASSED!")
+        # self.second_count = 0
 
         return resampled
 

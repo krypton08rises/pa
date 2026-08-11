@@ -28,6 +28,7 @@ class VadChunkStream:
         recording_config: RecordingConfig,
         onnx: bool = False,
         config: VadConfig = VadConfig(),
+        verbose: bool = False,
     ):
 
         self.recording_config = recording_config
@@ -46,7 +47,7 @@ class VadChunkStream:
         self.last_chunk_timestamp = (
             time.perf_counter()
         )  # Initialize the last chunk timestamp
-        self.verbose: bool = True
+        self.verbose: bool = verbose
 
         self.in_utterance: bool = (
             False  # Flag to indicate if we are currently in an utterance
@@ -55,8 +56,9 @@ class VadChunkStream:
             []
         )  # Buffer to hold chunks for the current utterance
         self.utterance_queue: queue.Queue = queue.Queue(
-            maxsize=recording_config.max_queue_size
+            maxsize=recording_config.utterance_max_queue_size
         )  # Queue to hold completed utterances
+        self.stop_event = threading.Event()  # Event to signal the VAD thread to stop
 
     # def __iter__(self):
     def start_vad(
@@ -70,7 +72,7 @@ class VadChunkStream:
 
         a syllable like go, high is ~100ms long, for an average word, we need ~300-500ms of speech.
         """
-        self.vad_thread = threading.Thread(target=self._stream_threadable, daemon=True)
+        self.vad_thread = threading.Thread(target=self._threadable_vad, daemon=True)
         self.vad_thread.start()
 
     def read_utterance(self) -> np.ndarray | None:
@@ -81,10 +83,13 @@ class VadChunkStream:
 
         while True:
             try:
-                if _chunk := self.utterance_queue.get_nowait():
+                if (_chunk := self.utterance_queue.get_nowait()) is not None:
                     return _chunk
 
             except queue.Empty:
+                if self.stop_event.is_set():
+                    return None
+
                 time.sleep(
                     5
                 )  # Comment this line later when we want to keep persistent mic stream on
@@ -93,7 +98,7 @@ class VadChunkStream:
                 logger.info("No utterance available in the queue: {error}", error=e)
                 return None
 
-    def _stream_threadable(self):
+    def _threadable_vad(self):
         """
         Threadable function to process audio chunks from the AudioStream and detect speech using VAD.
         Adds chunks to the utterance buffer when speech is detected and yields the buffer when speech ends or max utterance duration is reached.
@@ -102,22 +107,17 @@ class VadChunkStream:
             while True:
                 audio_chunk = audio_stream.read()
                 if audio_chunk is None:
-                    # Flush any remaining utterance buffer before exiting
-                    if self.utterance_buffer:
-                        self.utterance_queue.put(None)
-
-                        self.utterance_buffer.clear()  # Clear the utterance buffer after yielding
-
-                    break
+                    break  # End of stream
 
                 self.pre_roll_q.append(
                     audio_chunk
                 )  # Store the chunk in the pre-roll queue
-                logger.info(
-                    "Chunk Shape: {shape} | Total chunks: {qsize}",
-                    shape=audio_chunk.shape,
-                    qsize=audio_stream.queue.qsize(),
-                )
+                if self.verbose:
+                    logger.info(
+                        "Chunk Shape: {shape} | Total chunks: {qsize}",
+                        shape=audio_chunk.shape,
+                        qsize=audio_stream.queue.qsize(),
+                    )
                 vad_probs = self.model(
                     torch.from_numpy(audio_chunk),
                     sr=audio_stream.config.sample_rate.value,
@@ -168,7 +168,8 @@ class VadChunkStream:
 
                 if (
                     self.consecutive_silence_count
-                    >= self.config.speech_complete_timeout_ms // self.chunk_size
+                    >= self.config.speech_complete_timeout_ms
+                    // self.chunk_size  # 32 chunks
                     and self.in_utterance
                 ):
                     if self.verbose:
@@ -205,6 +206,13 @@ class VadChunkStream:
                     self.utterance_buffer.extend(
                         self.pre_roll_q
                     )  # Add pre-roll buffer to the new utterance buffer
+
+                if self.stop_event.is_set():
+                    break
+            if self.utterance_buffer:
+                self.utterance_queue.put(np.concatenate(self.utterance_buffer, axis=0))
+                self.utterance_buffer.clear()  # Clear the utterance buffer after yielding
+            self.stop_event.set()  # Signal the VAD thread to stop
 
     def max_utterance_seconds_reached(self) -> bool:
         """

@@ -48,6 +48,7 @@ class RecordingConfig:
         channels: Channels = Channels.MONO,
         chunk_size: int = 1536,  # 512 * 3 (downsample from 48kHz to 16kHz)
         max_queue_size: int = 1024,
+        utterance_max_queue_size: int = 10,
     ):
 
         self.mic: bool = mic
@@ -63,6 +64,7 @@ class RecordingConfig:
         self.channels: Channels = channels
         self.chunk_size: int = chunk_size
         self.max_queue_size: int = max_queue_size
+        self.utterance_max_queue_size: int = utterance_max_queue_size
 
 
 class ResampleConfig:
@@ -98,7 +100,7 @@ class VadConfig:
         )
 
         self.speech_complete_timeout_ms: int = (
-            1000  # Timeout for speech completion in milliseconds
+            1024  # Timeout for speech completion in milliseconds
         )
 
         # The number of
