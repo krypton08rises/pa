@@ -1,14 +1,33 @@
+import librosa
 import numpy as np
+
 from enum import IntEnum
 from pathlib import Path
 from typing import Literal, NewType
 
 from loggy import logger
-import librosa
+
+BASE_URL = "http://localhost:8080/v1"
 
 MAX_BUFFER_SIZE = 10  # Seconds?
 
 DEVICE = 14
+
+WHISPER_MODEL_SIZE = "base"  # Options: tiny, base, small, medium, large-v1, large-v2
+
+
+def read_system_prompt(fp: Path) -> str:
+    """
+    Read the system prompt from the GEMMA_SYSTEM_PROMPT.md file.
+    """
+
+    with open(fp, "r") as f:
+        return f.read()
+
+
+GEMMA_SYSTEM_PROMPT = read_system_prompt(
+    Path(__file__).parent / "data/llama_prompts/system.md"
+)
 
 ResampleType = NewType(
     "ResampleType",
@@ -48,6 +67,7 @@ class RecordingConfig:
         channels: Channels = Channels.MONO,
         max_queue_size: int = 1024,
         utterance_max_queue_size: int = 10,
+        speech_max_queue_size: int = 10,
     ):
 
         self.mic: bool = mic
@@ -62,6 +82,7 @@ class RecordingConfig:
         self.channels: Channels = channels
         self.max_queue_size: int = max_queue_size
         self.utterance_max_queue_size: int = utterance_max_queue_size
+        self.speech_max_queue_size: int = speech_max_queue_size
 
 
 class ResampleConfig:
