@@ -1,5 +1,6 @@
 import librosa
 import numpy as np
+import sounddevice as sd
 
 from enum import IntEnum
 from pathlib import Path
@@ -11,23 +12,60 @@ BASE_URL = "http://localhost:8080/v1"
 
 MAX_BUFFER_SIZE = 10  # Seconds?
 
-DEVICE = 14
+DEFAULT_DEVICE_NAME = "webcam"  # Substring match against sounddevice's device names
 
 WHISPER_MODEL_SIZE = "base"  # Options: tiny, base, small, medium, large-v1, large-v2
 
 
-def read_system_prompt(fp: Path) -> str:
+def find_input_device(name_substring: str = DEFAULT_DEVICE_NAME) -> int:
     """
-    Read the system prompt from the GEMMA_SYSTEM_PROMPT.md file.
+    Find the index of an input device whose name contains `name_substring`
+    (case-insensitive).
+    Parameters
+    ----------
+    name_substring : str
+        Substring to search for in the device names. Default is "webcam".
+    Returns
+    -------
+    int
+        Index of the first matching input device. If no matching device is found, returns the index of the default input device. If multiple devices match, returns the first one that matches and is on the default host API.
+
     """
+    devices = sd.query_devices()
+    default_hostapi = sd.default.hostapi
 
-    with open(fp, "r") as f:
-        return f.read()
+    matches = [
+        idx
+        for idx, dev in enumerate(devices)
+        if dev["max_input_channels"] > 0
+        and name_substring.lower() in dev["name"].lower()
+    ]
 
+    for idx in matches:
+        if devices[idx]["hostapi"] == default_hostapi:
+            logger.info(
+                "Selected input device {idx}: {name}",
+                idx=idx,
+                name=devices[idx]["name"],
+            )
+            return idx
 
-GEMMA_SYSTEM_PROMPT = read_system_prompt(
-    Path(__file__).parent / "data/llama_prompts/system.md"
-)
+    if matches:
+        idx = matches[0]
+        logger.info(
+            "Selected input device {idx}: {name}", idx=idx, name=devices[idx]["name"]
+        )
+        return idx
+
+    default_idx = sd.default.device[0]
+    logger.warning(
+        "No input device matching '{needle}' found. Falling back to system default input device {idx}: {name}",
+        needle=name_substring,
+        idx=default_idx,
+        name=devices[default_idx]["name"],
+    )
+    return default_idx
+
 
 ResampleType = NewType(
     "ResampleType",
@@ -60,7 +98,7 @@ class Channels(IntEnum):
 class RecordingConfig:
     def __init__(
         self,
-        audio_device: int = DEVICE,
+        audio_device: int | None = None,
         mic: bool = True,
         file_path: Path | None = None,
         sample_rate: SampleRate = SampleRate.DEFAULT,
@@ -71,7 +109,11 @@ class RecordingConfig:
     ):
 
         self.mic: bool = mic
-        self.device: int = audio_device
+        self.device: int | None = (
+            audio_device
+            if audio_device is not None
+            else (find_input_device() if mic else None)
+        )
         if not mic and file_path is None:
             raise ValueError(
                 "Either mic must be True or a valid file_path must be provided."
@@ -118,7 +160,7 @@ class VadConfig:
         )
 
         self.speech_complete_timeout_ms: int = (
-            1024  # Timeout for speech completion in milliseconds
+            2048  # Timeout for speech completion in milliseconds
         )
 
         self.preroll_ring_size: int = (

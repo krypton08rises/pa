@@ -34,6 +34,7 @@ class WhisperTranscriber:
             self.config.speech_max_queue_size
         )  # Queue to hold transcribed speech segments
         self.stop_event = threading.Event()  # Event to signal the VAD thread to stop
+        self.idle_time_last = time.perf_counter()
 
     def transcribe_audio(self, _chunk) -> str:
         segments, info = self.model.transcribe(
@@ -73,6 +74,7 @@ class WhisperTranscriber:
                 if (_speech := self.speech_q.get_nowait()) is not None:
                     return _speech
             except queue.Empty:
+                self.idle_time_last = time.perf_counter()
                 if self.stop_event.is_set():
                     logger.info("Transcription stopped. No more messages.")
                     return None
@@ -119,3 +121,9 @@ class WhisperTranscriber:
         self.stop_event.set()  # Signal the ASR thread to stop
 
         logger.info("Final Transcribed Message: {message}", message=complete_message)
+
+    def speech_backlog(self) -> int:
+        """
+        Get the current size of the speech queue.
+        """
+        return self.speech_q.qsize()
