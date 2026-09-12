@@ -2,8 +2,13 @@ from collections.abc import Callable
 
 from loggy import logger
 
-from ._message import Conversation, SummaryBlock, Message
-from ._common import CompactionConfig, COMPACTION_PROMPT, GEMMA_SYSTEM_PROMPT
+from ._message import Conversation, SummaryBlock, Message, Content
+from ._common import (
+    CompactionConfig,
+    COMPACTION_PROMPT,
+    GEMMA_SYSTEM_PROMPT,
+    MERGE_COMPACTION_BLOCKS_PROMPT,
+)
 
 
 class ConversationManager:
@@ -95,7 +100,7 @@ class ConversationManager:
         summary_messages = [
             Message(
                 role="user",
-                content=f"[compacted context, {block.source_turn_count} turns]\n{block.content}",
+                content=f"[compacted context, {block.source_turn_count} turns]\n{block.content.render()}",
             )
             for block in self.summary_blocks
         ]
@@ -124,18 +129,15 @@ class Compactor:
         cm.turn_count += 1
 
         response = _query_llm(conversation=conversation, compaction=True)
+        content = Content.model_validate_json(response)
         cm.summary_blocks.append(
             SummaryBlock(
-                content=response,
+                content=content,
                 token_count=conversation.token_count,
                 source_turn_count=len(cm.live.messages),
                 merge_depth=0,
             )
         )
-        cm.live.clear()
-        cm.compact_flag = False
-        cm.add_system_message(GEMMA_SYSTEM_PROMPT)
-        cm.add_assistant_message(response)
 
         logger.info(
             "Compaction done: {turns} messages -> summary block #{n} ({tokens} tokens), live reset",
@@ -143,9 +145,44 @@ class Compactor:
             n=len(cm.summary_blocks),
             tokens=conversation.token_count,
         )
+        if len(cm.summary_blocks) > cm.config.max_compaction_blocks:
+            Compactor.merge_compaction(_query_llm=_query_llm, cm=cm)
 
-    def merge_compaction(self, _query_llm: Callable, cm: ConversationManager):
+        cm.live.clear()
+        cm.compact_flag = False
+
+        cm.add_system_message(GEMMA_SYSTEM_PROMPT)
+        cm.add_assistant_message(response)
+
+    @classmethod
+    def merge_compaction(cls, _query_llm: Callable, cm: ConversationManager):
         """
-        Merge the last two summary blocks into a new summary block.
+        Merge the First two summary blocks into a new summary block.
         """
-        pass
+
+        # Merge first 2 summary blocks, and add to the front of the list
+        conversation = ConversationManager(live=Conversation())
+        conversation.add_system_message(MERGE_COMPACTION_BLOCKS_PROMPT)
+        conversation.add_system_message(cm.summary_blocks[0].model_dump_json())
+        conversation.add_system_message(cm.summary_blocks[1].model_dump_json())
+
+        response = _query_llm(conversation=conversation, compaction=True)
+        content = Content.model_validate_json(response)
+        cm.summary_blocks = [
+            SummaryBlock(
+                content=content,
+                token_count=conversation.token_count,
+                source_turn_count=cm.summary_blocks[0].source_turn_count
+                + cm.summary_blocks[1].source_turn_count,
+                merge_depth=max(
+                    cm.summary_blocks[0].merge_depth, cm.summary_blocks[1].merge_depth
+                )
+                + 1,
+            )
+        ] + cm.summary_blocks[2:]
+
+        logger.info(
+            "Merge compaction done: first two summary blocks merged into new summary block #{n} ({tokens} tokens)",
+            n=len(cm.summary_blocks),
+            tokens=conversation.token_count,
+        )

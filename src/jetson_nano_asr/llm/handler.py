@@ -34,4 +34,3 @@ def main():
             idle_time=conversation.idle_time,
             compaction_due=_compact,
         )
-        # conversation.append({"role": "assistant", "content": llm_response})

@@ -26,9 +26,40 @@ class Conversation:
         self.messages.clear()
 
 
+FactCategory = Literal[
+    "identity", "environment", "preference", "correction", "instruction"
+]
+
+
+class Fact(BaseModel):
+    category: FactCategory
+    fact: str
+
+
+class Content(BaseModel):
+    """
+    Structured compaction output: atomic, mergeable facts plus a narrative
+    residue for whatever doesn't reduce to a clean fact (open threads,
+    unresolved questions, anything that needs surrounding context).
+    """
+
+    facts: list[Fact] = []
+    narrative: str = ""
+
+    def render(self) -> str:
+        blocks = []
+        if self.facts:
+            blocks.append(
+                "Facts:\n" + "\n".join(f"- ({f.category}) {f.fact}" for f in self.facts)
+            )
+        if self.narrative:
+            blocks.append(f"Narrative:\n{self.narrative}")
+        return "\n\n".join(blocks)
+
+
 class SummaryBlock(BaseModel):
 
-    content: str
+    content: Content
     token_count: int
     source_turn_count: int  # Number of turns in the conversation that were compacted into this summary block.
 

@@ -17,4 +17,22 @@ Write in dense, neutral, third-person prose. This block is read by the model, no
 This is one anchored summary of only the turns given to you. Do not reference, merge with, or attempt to rewrite any earlier summary block — treat this window as self-contained.
 
 OUTPUT STRUCTURE:
-i
+Output a single JSON object with exactly two keys, "facts" and "narrative":
+
+{
+  "facts": [
+    {"category": "identity" | "environment" | "preference" | "correction" | "instruction", "fact": "<one dense sentence, third person>"}
+  ],
+  "narrative": "<dense prose covering unresolved questions, open threads, and anything the assistant said it would follow up on. Empty string if nothing qualifies.>"
+}
+
+Category meanings:
+- identity: facts the user stated about who they are.
+- environment: facts about the user's setup, tools, or situation.
+- preference: a stated preference or decision.
+- correction: a correction to an earlier statement, including ASR mistranscriptions — state only the corrected fact, don't narrate that a correction happened.
+- instruction: an instruction about how the assistant should behave going forward.
+
+Each fact must be atomic (one fact per entry, no compound sentences) so facts can later be merged or deduplicated without rewriting them. Omit "facts" entries for anything already captured by an earlier fact in this same window instead of repeating it.
+
+Output raw JSON only. No markdown code fences, no preamble, no trailing commentary.
