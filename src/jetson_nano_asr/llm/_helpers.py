@@ -150,6 +150,9 @@ class Compactor:
 
         cm.live.clear()
         cm.compact_flag = False
+        cm.token_count = (
+            0  # stale until the next request_llama call reports a real usage count
+        )
 
         cm.add_system_message(GEMMA_SYSTEM_PROMPT)
         cm.add_assistant_message(response)

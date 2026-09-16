@@ -81,6 +81,9 @@ class VadChunkStream:
         Returns None if no utterance is available.
         """
 
+        idle_since = time.perf_counter()
+        last_heartbeat = idle_since
+
         while True:
             try:
                 if (_chunk := self.utterance_queue.get(timeout=0.5)) is not None:
@@ -89,6 +92,14 @@ class VadChunkStream:
             except queue.Empty:
                 if self.stop_event.is_set():
                     return None
+
+                now = time.perf_counter()
+                if now - last_heartbeat > 10.0:
+                    logger.info(
+                        "Still waiting for speech ({idle:.0f}s idle)",
+                        idle=now - idle_since,
+                    )
+                    last_heartbeat = now
 
             except Exception as e:
                 logger.info("No utterance available in the queue: {error}", error=e)

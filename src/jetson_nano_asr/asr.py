@@ -47,10 +47,14 @@ class WhisperTranscriber:
         message = ""
         for segment in segments:
 
-            logger.info(
-                "Detected speech from {start:.2f}s to {end:.2f}s: {text}",
+            logger.debug(
+                "Detected speech from {start:.2f}s to {end:.2f}s ({duration:.2f}s, "
+                "avg_logprob={avg_logprob:.2f}, no_speech_prob={no_speech_prob:.2f}): {text}",
                 start=segment.start,
                 end=segment.end,
+                duration=segment.end - segment.start,
+                avg_logprob=segment.avg_logprob,
+                no_speech_prob=segment.no_speech_prob,
                 text=segment.text,
             )
             message += segment.text + " "
@@ -94,14 +98,24 @@ class WhisperTranscriber:
         )
 
         complete_message = ""
+        utterance_count = 0
         vad_stream.start_vad()
 
         try:
             while (chunk := vad_stream.read_utterance()) is not None:
 
-                # logger.info("Processing chunk of shape: {shape}", shape=chunk.shape)
+                utterance_count += 1
+                utterance_duration = chunk.shape[-1] / self.config.sample_rate.value
                 msg = self.transcribe_audio(chunk)
-                logger.info("Segment Transcribed Message: {message}", message=msg)
+                logger.info(
+                    "Utterance #{n} transcribed ({duration:.2f}s spoken, {chars} chars, "
+                    "queue backlog {backlog}): {message}",
+                    n=utterance_count,
+                    duration=utterance_duration,
+                    chars=len(msg),
+                    backlog=self.speech_q.qsize(),
+                    message=msg,
+                )
 
                 complete_message += msg + "\t"
                 self.speech_q.put(msg)  # Put the transcribed message into the queue

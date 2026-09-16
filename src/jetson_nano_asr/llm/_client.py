@@ -1,3 +1,5 @@
+import time
+
 from openai import OpenAI
 from loggy import logger
 from jetson_nano_asr.common import BASE_URL
@@ -14,10 +16,13 @@ def request_llama(conversation: ConversationManager, compaction: bool = False) -
     )
 
     messages = conversation.to_openai()
+    request_start = time.perf_counter()
     logger.debug(
-        "Sending {kind} request: {n} messages",
+        "Sending {kind} request: {n} messages, {chars} total chars, {pre_tokens} tokens known going in",
         kind="compaction" if compaction else "chat",
         n=len(messages),
+        chars=sum(len(m["content"]) for m in messages),
+        pre_tokens=conversation.token_count,
     )
 
     response = client.chat.completions.create(
@@ -35,9 +40,14 @@ def request_llama(conversation: ConversationManager, compaction: bool = False) -
 
         if chunk.usage:
             conversation.token_count = chunk.usage.total_tokens
+            elapsed = time.perf_counter() - request_start
             logger.debug(
-                "LLM usage: {total_tokens} total tokens",
-                total_tokens=conversation.token_count,
+                "LLM usage ({kind}): {prompt} prompt + {completion} completion = {total} total tokens, {elapsed:.2f}s elapsed",
+                kind="compaction" if compaction else "chat",
+                prompt=chunk.usage.prompt_tokens,
+                completion=chunk.usage.completion_tokens,
+                total=conversation.token_count,
+                elapsed=elapsed,
             )
 
     conversation.add_assistant_message(contents)
