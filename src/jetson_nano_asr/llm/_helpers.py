@@ -1,6 +1,7 @@
 from collections.abc import Callable
 
 from loggy import logger
+from pydantic import ValidationError
 
 from ._message import Conversation, SummaryBlock, Message, Content
 from ._common import (
@@ -89,23 +90,56 @@ class ConversationManager:
 
     def to_openai(self) -> list[dict]:
         """
-        Assemble the messages actually sent to the model: the system message,
-        one message per summary block (oldest first), then the live turns
-        accumulated since the last compaction.
+        Assemble the messages actually sent to the model: one system message
+        (the system prompt followed by every summary block, oldest first),
+        then the live turns accumulated since the last compaction.
+
+        Summaries are folded into the system message rather than sent as
+        separate user turns, so the conversation still starts with a single
+        system message and alternates user/assistant after it (Gemma's chat
+        template expects that). The prefix only changes at a compaction
+        event, so prompt-cache reuse between compactions is unaffected.
         """
         messages = list(self.live.messages)
-        system = messages[:1] if messages and messages[0].role == "system" else []
-        turns = messages[1:] if system else messages
+        has_system = bool(messages) and messages[0].role == "system"
+        system_text = messages[0].content if has_system else ""
+        turns = messages[1:] if has_system else messages
 
-        summary_messages = [
-            Message(
-                role="user",
-                content=f"[compacted context, {block.source_turn_count} turns]\n{block.content.render()}",
-            )
+        summaries = [
+            f"[compacted context, {block.source_turn_count} turns]\n{block.content.render()}"
             for block in self.summary_blocks
         ]
+        if summaries:
+            system_text = "\n\n".join([system_text, *summaries]).strip()
 
-        return [m.to_openai() for m in system + summary_messages + turns]
+        system = [Message(role="system", content=system_text)] if system_text else []
+        return [m.to_openai() for m in system + turns]
+
+
+def _render_transcript(messages: list[Message]) -> str:
+    """Flatten dialogue turns into one plain-text block for the summarizer."""
+    return "\n".join(f"{m.role.upper()}: {m.content}" for m in messages)
+
+
+def _parse_summary(response: str) -> Content:
+    """
+    Parse the summarizer's JSON output. Grammar-constrained decoding should
+    make this always succeed; the fence-stripping and fallback are here so a
+    bad summary degrades into a narrative-only block instead of crashing the
+    main loop.
+    """
+    text = response.strip()
+    if text.startswith("```"):
+        text = text.split("\n", 1)[1] if "\n" in text else ""
+        text = text.rsplit("```", 1)[0].strip()
+    try:
+        return Content.model_validate_json(text)
+    except ValidationError as e:
+        logger.warning(
+            "Compaction output was not valid JSON, keeping it as narrative: {err}",
+            err=e,
+        )
+        return Content(narrative=text)
 
 
 class Compactor:
@@ -115,47 +149,51 @@ class Compactor:
         Compact the conversation by summarizing the current live conversation and adding it to the summary_blocks.
         """
 
-        turn_count = len(cm.live.messages)
+        messages = cm.live.messages
+        has_system = bool(messages) and messages[0].role == "system"
+        system_prompt = messages[0].content if has_system else GEMMA_SYSTEM_PROMPT
+        turns = messages[1:] if has_system else list(messages)
+        if not turns:
+            return
+
         logger.info(
-            "Compaction starting: summarizing {turns} messages", turns=turn_count
+            "Compaction starting: summarizing {turns} messages", turns=len(turns)
         )
 
-        # plan is to add compaction prompt to a completely seperate object
-        conversation = ConversationManager(
-            live=Conversation(messages=list(cm.live.messages))
-        )
+        # Separate request: the compaction prompt is the only system message
+        # and the dialogue to summarize arrives as a single user message.
+        conversation = ConversationManager(live=Conversation())
         conversation.add_system_message(COMPACTION_PROMPT)
-        # This would empty the live
+        conversation.add_user_message(_render_transcript(turns))
         cm.turn_count += 1
 
         response = _query_llm(conversation=conversation, compaction=True)
-        content = Content.model_validate_json(response)
         cm.summary_blocks.append(
             SummaryBlock(
-                content=content,
+                content=_parse_summary(response),
                 token_count=conversation.token_count,
-                source_turn_count=len(cm.live.messages),
+                source_turn_count=len(turns),
                 merge_depth=0,
             )
         )
 
         logger.info(
             "Compaction done: {turns} messages -> summary block #{n} ({tokens} tokens), live reset",
-            turns=turn_count,
+            turns=len(turns),
             n=len(cm.summary_blocks),
             tokens=conversation.token_count,
         )
         if len(cm.summary_blocks) > cm.config.max_compaction_blocks:
             Compactor.merge_compaction(_query_llm=_query_llm, cm=cm)
 
+        # The summary now lives in summary_blocks (rendered into the system
+        # message by to_openai), so live restarts with just the system prompt.
         cm.live.clear()
+        cm.add_system_message(system_prompt)
         cm.compact_flag = False
         cm.token_count = (
             0  # stale until the next request_llama call reports a real usage count
         )
-
-        cm.add_system_message(GEMMA_SYSTEM_PROMPT)
-        cm.add_assistant_message(response)
 
     @classmethod
     def merge_compaction(cls, _query_llm: Callable, cm: ConversationManager):
@@ -166,11 +204,14 @@ class Compactor:
         # Merge first 2 summary blocks, and add to the front of the list
         conversation = ConversationManager(live=Conversation())
         conversation.add_system_message(MERGE_COMPACTION_BLOCKS_PROMPT)
-        conversation.add_system_message(cm.summary_blocks[0].model_dump_json())
-        conversation.add_system_message(cm.summary_blocks[1].model_dump_json())
+        conversation.add_user_message(
+            "\n\n".join(
+                block.content.model_dump_json() for block in cm.summary_blocks[:2]
+            )
+        )
 
         response = _query_llm(conversation=conversation, compaction=True)
-        content = Content.model_validate_json(response)
+        content = _parse_summary(response)
         cm.summary_blocks = [
             SummaryBlock(
                 content=content,

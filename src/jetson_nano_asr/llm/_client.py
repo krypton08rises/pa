@@ -4,6 +4,14 @@ from openai import OpenAI
 from loggy import logger
 from jetson_nano_asr.common import BASE_URL
 from jetson_nano_asr.llm._helpers import ConversationManager
+from jetson_nano_asr.llm._message import Content
+
+# llama-server turns a JSON schema into a GBNF grammar, so compaction output
+# is guaranteed to parse into Content (no stray code fences or preamble).
+COMPACTION_RESPONSE_FORMAT = {
+    "type": "json_schema",
+    "json_schema": {"name": "compaction", "schema": Content.model_json_schema()},
+}
 
 
 def request_llama(conversation: ConversationManager, compaction: bool = False) -> str:
@@ -31,6 +39,7 @@ def request_llama(conversation: ConversationManager, compaction: bool = False) -
         temperature=1,
         stream=True,
         stream_options={"include_usage": True},
+        **({"response_format": COMPACTION_RESPONSE_FORMAT} if compaction else {}),
     )
     contents = ""
 
